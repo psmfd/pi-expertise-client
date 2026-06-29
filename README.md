@@ -9,6 +9,14 @@ A local-only pi extension that talks to a developer's locally-running
 This extension registers the read-side tool `expertise_search` (#317) and the
 create-only `expertise_create` tool (#318).
 
+## Install
+
+```sh
+pi install git:github.com/psmfd/pi-expertise-client
+```
+
+Try it first without installing: `pi -e git:github.com/psmfd/pi-expertise-client`.
+
 ## Prerequisite — a running `agent-expertise-api`
 
 This extension is a **client**. It does nothing on its own: it requires a
