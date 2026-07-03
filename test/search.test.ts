@@ -49,14 +49,14 @@ test("searchExpertise returns body on success", async () => {
   assert.equal(cap.url?.searchParams.get("limit"), "5");
 });
 
-test("searchExpertise sends the API key as x-api-key", async () => {
+test("searchExpertise sends the API key as Authorization: Bearer", async () => {
   const cap: Captured = {};
   await searchExpertise(
     CONFIG,
     { query: "x" },
     { fetchImpl: capturingFetch(cap, 200, "{}") },
   );
-  assert.equal(cap.headers?.["x-api-key"], SECRET);
+  assert.equal(cap.headers?.["authorization"], `Bearer ${SECRET}`);
 });
 
 test("searchExpertise never leaks the API key into output", async () => {

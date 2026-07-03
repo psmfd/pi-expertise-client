@@ -120,7 +120,7 @@ test("runCreate fails closed when readiness fails", async () => {
 
 // --- createExpertise transport ---------------------------------------------
 
-test("createExpertise POSTs to CREATE_PATH with JSON body, x-api-key, Idempotency-Key", async () => {
+test("createExpertise POSTs to CREATE_PATH with JSON body, Bearer auth, Idempotency-Key", async () => {
   const cap: Captured = {};
   const r = await createExpertise(
     WRITE_CONFIG,
@@ -129,7 +129,7 @@ test("createExpertise POSTs to CREATE_PATH with JSON body, x-api-key, Idempotenc
   );
   assert.ok(r.ok);
   assert.equal(cap.url?.pathname, CREATE_PATH);
-  assert.equal(cap.headers?.["x-api-key"], SECRET);
+  assert.equal(cap.headers?.["authorization"], `Bearer ${SECRET}`);
   assert.equal(cap.headers?.["content-type"], "application/json");
   assert.ok(cap.headers?.["Idempotency-Key"]);
   const parsed = JSON.parse(cap.body ?? "{}") as {

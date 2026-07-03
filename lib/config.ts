@@ -23,7 +23,7 @@ export const ENV_ALLOW_WRITE = "PI_EXPERTISE_ALLOW_LOCALDEV_WRITE";
 export interface ClientConfig {
   /** Loopback origin, e.g. `http://127.0.0.1:8080`. */
   baseUrl: string;
-  /** API key for `x-api-key`. Never logged or surfaced. */
+  /** API key, sent as `Authorization: Bearer`. Never logged or surfaced. */
   apiKey: string;
   /** Whether local write/create is explicitly opted in (`...=1`). */
   allowWrite: boolean;

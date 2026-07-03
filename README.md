@@ -69,7 +69,7 @@ Precedence: `process.env` > `.env.local` > built-in defaults.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `PI_EXPERTISE_API_BASE_URL` | no | `http://127.0.0.1:8080` | Loopback origin of the local API. Non-loopback hosts are refused. |
-| `PI_EXPERTISE_API_KEY` | **yes** | — | Sent as `x-api-key` on every call. Never logged or surfaced. |
+| `PI_EXPERTISE_API_KEY` | **yes** | — | Sent as `Authorization: Bearer` on every call. Never logged or surfaced. |
 | `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Opt-in for `expertise_create`. Must be `1` to enable create. Ignored by search. |
 | `SKIP_EXPERTISE_CLIENT` | no | `0` | Override: when truthy, the client registers no tools (see [Coexistence](#coexistence-adr-0029)). |
 
@@ -130,7 +130,8 @@ Pending the frozen upstream contract (tracked under #149):
   "generated per create request"; it does **not** de-duplicate retries across
   calls.
 - Readiness route: `GET /health/ready` (200 ⇒ ready).
-- Credential header: `x-api-key`.
+- Credential header: `Authorization: Bearer <key>` (the only scheme
+  agent-expertise-api's ApiKey mode accepts — #486).
 
 These are single-edit constants and will be reconciled against a running API
 instance before the client is declared production-usable.

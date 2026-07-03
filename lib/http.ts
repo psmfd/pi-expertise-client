@@ -2,7 +2,9 @@
  * expertise-client — bounded HTTP helpers (ADR-0028).
  *
  * Thin GET/POST wrappers around the configured loopback API. They:
- *   - inject the `x-api-key` credential (never echoed back to callers);
+ *   - inject the `Authorization: Bearer` credential (never echoed back to
+ *     callers) — the only scheme agent-expertise-api's ApiKeyAuthHandler
+ *     accepts (#486);
  *   - refuse to follow redirects (`redirect: "error"`) so an unexpected 3xx
  *     cannot bounce the request off-loopback;
  *   - bound the response body to MAX_BODY_BYTES.
@@ -77,7 +79,7 @@ export async function apiGet(
     method: "GET",
     redirect: "error",
     headers: {
-      "x-api-key": config.apiKey,
+      authorization: `Bearer ${config.apiKey}`,
       accept: "application/json",
     },
   };
@@ -108,10 +110,10 @@ export async function apiPost(
     headers: {
       // Per-request extras (e.g. Idempotency-Key) are spread FIRST so the
       // baseline credential / content-type headers below always win — a caller
-      // (or future caller) cannot clobber `x-api-key` or `content-type` via
+      // (or future caller) cannot clobber `authorization` or `content-type` via
       // extraHeaders. Last-write-wins on object literals (#323).
       ...(options.extraHeaders ?? {}),
-      "x-api-key": config.apiKey,
+      authorization: `Bearer ${config.apiKey}`,
       accept: "application/json",
       "content-type": "application/json",
     },
