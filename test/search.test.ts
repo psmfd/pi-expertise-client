@@ -1,15 +1,18 @@
 /**
- * expertise-client — expertise_search tests (ADR-0028).
+ * expertise-client — expertise_search tests (ADR-0028, #489).
  *
- * Includes a secret-non-disclosure assertion: the API key is sent as a header
- * but must never appear in tool-visible output.
+ * Pins the REAL agent-expertise-api v1.1.0 semantic-search contract
+ * (`GET /expertise/search/semantic?q=...&limit=...`), verified against the
+ * server source — not an assumed shape. Includes a secret-non-disclosure
+ * assertion: the API key is sent as a header but must never appear in
+ * tool-visible output.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { ClientConfig } from "../lib/config.ts";
-import { searchExpertise } from "../lib/search.ts";
+import { SEARCH_PATH, searchExpertise } from "../lib/search.ts";
 
 const SECRET = "super-secret-api-key";
 const CONFIG: ClientConfig = {
@@ -27,15 +30,16 @@ function capturingFetch(
   cap: Captured,
   status: number,
   body: string,
+  responseHeaders?: Record<string, string>,
 ): typeof fetch {
   return (async (url: URL, init: RequestInit) => {
     cap.url = url;
     cap.headers = init.headers as Record<string, string>;
-    return new Response(body, { status });
+    return new Response(body, { status, headers: responseHeaders });
   }) as unknown as typeof fetch;
 }
 
-test("searchExpertise returns body on success", async () => {
+test("searchExpertise targets the semantic endpoint with q= and limit=", async () => {
   const cap: Captured = {};
   const r = await searchExpertise(
     CONFIG,
@@ -44,9 +48,39 @@ test("searchExpertise returns body on success", async () => {
   );
   assert.ok(r.ok);
   if (r.ok) assert.match(r.text, /results/);
-  assert.equal(cap.url?.pathname, "/expertise/search");
-  assert.equal(cap.url?.searchParams.get("query"), "kafka");
+  assert.equal(cap.url?.pathname, "/expertise/search/semantic");
+  assert.equal(cap.url?.pathname, SEARCH_PATH);
+  assert.equal(cap.url?.searchParams.get("q"), "kafka");
+  assert.equal(cap.url?.searchParams.has("query"), false);
   assert.equal(cap.url?.searchParams.get("limit"), "5");
+});
+
+test("searchExpertise omits limit when not provided", async () => {
+  const cap: Captured = {};
+  await searchExpertise(
+    CONFIG,
+    { query: "kafka" },
+    { fetchImpl: capturingFetch(cap, 200, "[]") },
+  );
+  assert.equal(cap.url?.searchParams.has("limit"), false);
+});
+
+test("searchExpertise clamps limit to the server's [1,100] range", async () => {
+  const high: Captured = {};
+  await searchExpertise(
+    CONFIG,
+    { query: "x", limit: 1000 },
+    { fetchImpl: capturingFetch(high, 200, "[]") },
+  );
+  assert.equal(high.url?.searchParams.get("limit"), "100");
+
+  const low: Captured = {};
+  await searchExpertise(
+    CONFIG,
+    { query: "x", limit: 0 },
+    { fetchImpl: capturingFetch(low, 200, "[]") },
+  );
+  assert.equal(low.url?.searchParams.get("limit"), "1");
 });
 
 test("searchExpertise sends the API key as Authorization: Bearer", async () => {
@@ -70,16 +104,35 @@ test("searchExpertise never leaks the API key into output", async () => {
   if (r.ok) assert.equal(r.text.includes(SECRET), false);
 });
 
-test("searchExpertise fails closed on non-2xx, without leaking the key", async () => {
+test("searchExpertise surfaces a 429 as a rate-limit refusal with Retry-After", async () => {
   const cap: Captured = {};
   const r = await searchExpertise(
     CONFIG,
     { query: "x" },
-    { fetchImpl: capturingFetch(cap, 401, "unauthorized") },
+    {
+      fetchImpl: capturingFetch(cap, 429, "too many", { "retry-after": "42" }),
+    },
   );
   assert.equal(r.ok, false);
   if (!r.ok) {
-    assert.match(r.reason, /401/);
+    assert.match(r.reason, /rate-limited/i);
+    assert.match(r.reason, /429/);
+    assert.match(r.reason, /42s/);
+    assert.equal(r.reason.includes(SECRET), false);
+  }
+});
+
+test("searchExpertise fails closed on non-2xx, surfacing the bounded error body", async () => {
+  const cap: Captured = {};
+  const r = await searchExpertise(
+    CONFIG,
+    { query: "x" },
+    { fetchImpl: capturingFetch(cap, 400, '{"title":"Query parameter \'q\' is required."}') },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.match(r.reason, /400/);
+    assert.match(r.reason, /required/);
     assert.equal(r.reason.includes(SECRET), false);
   }
 });

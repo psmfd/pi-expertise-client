@@ -53,7 +53,7 @@ fails open (registers normally) on any read error. Set
 
 | Tool | Kind | Notes |
 |---|---|---|
-| `expertise_search` | read-only | Queries the local API for expertise entries. Output is **advisory** and must be cross-checked against the static agent catalog. |
+| `expertise_search` | read-only | Semantic (vector-similarity) query of the local API. Output is **advisory** and must be cross-checked against the static agent catalog. Rate-limited to 10 requests/min server-side. |
 | `expertise_create` | create-only write | Creates a single entry. Double-gated: requires `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1` **and** a clean body-secret scan. No update/delete/archive/approve. |
 
 ## Configuration
@@ -94,8 +94,9 @@ All of the following are **hard refusals** (fail closed, no override in phase 1)
 | `/health/ready` returns non-200 or is unreachable | refuse |
 | search request errors or returns non-2xx | refuse |
 | `expertise_create` called with `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` != `1` | refuse (before any network call) |
-| `expertise_create` body field (`title`/`content`/`tags[]`/`source`) matches a credential pattern | refuse (category named, secret never echoed) |
-| create request errors or returns non-2xx | refuse |
+| any string field of the `expertise_create` body matches a credential pattern | refuse (category named, secret never echoed) |
+| create request errors or returns non-2xx | refuse (409 near-duplicate and 400/other bodies are surfaced) |
+| search returns HTTP 429 (rate limit) | refuse with a wait-before-retry message (surfaces `Retry-After` when present) |
 
 ## Trust boundary
 
@@ -111,30 +112,44 @@ All of the following are **hard refusals** (fail closed, no override in phase 1)
 - **Create body-secret guard.** `secrets-guard` (the global extension) only sees
   `write`/`edit`/`artifact_review`/`bash` and is scoped to disk/commit
   persistence, so it never inspects `expertise_create`. Instead an
-  extension-local lightweight guard (`lib/secret-scan.ts`) scans the create body
-  before any network call and refuses if a field carries a credential pattern
-  (PEM private-key block / AWS access key ID / GitHub PAT — the exact
-  `secrets-guard` pattern set). It returns **category names only**, never the
-  matched secret, so the refusal message cannot leak the value.
+  extension-local lightweight guard (`lib/secret-scan.ts`) scans **every string
+  field** of the create body before any network call and refuses if any carries
+  a credential pattern (PEM private-key block / AWS access key ID / GitHub token /
+  signed JWT / `Authorization: Bearer` literal — the exact `secrets-guard` pattern
+  set, framework ADR-095). The scan is field-shape-agnostic
+  (every string property and string-array element), so a future contract field
+  cannot silently bypass it (#489). It returns **category names only**, never
+  the matched secret, so the refusal message cannot leak the value.
 
-## Assumptions
+## API contract
 
-Pending the frozen upstream contract (tracked under #149):
+Verified against `agent-expertise-api` v1.1.0 (live end-to-end, #489). These
+are single-edit constants centralized in `lib/search.ts` / `lib/create.ts`.
 
-- Search route: `GET /expertise/search?query=...&limit=...` (centralized in
-  `lib/search.ts`).
-- Create route: `POST /expertise` with a JSON body
-  (`title`, `content`, optional `tags[]`, optional `source`), a fresh
-  `Idempotency-Key` header per request, and `content-type: application/json`
-  (centralized in `lib/create.ts`). The per-call key satisfies ADR-0028's
-  "generated per create request"; it does **not** de-duplicate retries across
-  calls.
-- Readiness route: `GET /health/ready` (200 ⇒ ready).
-- Credential header: `Authorization: Bearer <key>` (the only scheme
+- **Search route:** `GET /expertise/search/semantic?q=...&limit=...` — semantic
+  vector search. `q` is required; `limit` is clamped to `[1, 100]` (client- and
+  server-side, default 10). Governed by a token-bucket rate limit of 10
+  requests/min per principal; a `429` is surfaced as a wait-before-retry
+  refusal. The keyword FTS endpoint (`/expertise/search`, `q` +
+  `includeDeprecated` only, no `limit`) is not exposed in phase 1.
+- **Create route:** `POST /expertise` with a JSON body — required `domain`,
+  `title`, `body`, `entryType` (`IssueFix` | `Caveat` | `Requirement` |
+  `Pattern`), `severity` (`Info` | `Warning` | `Critical`), `source` (defaults
+  to `pi-session`); optional `tags[]`, `sourceVersion`. Sent with a fresh
+  `Idempotency-Key` header per request (the server requires it) and
+  `content-type: application/json`. `entryType`/`severity` are **required tool
+  parameters** even though the server would default an omitted value — the
+  server silently defaults to `IssueFix`/`Info`, which mis-tags entries rather
+  than erroring. The server's `tenant` field is **deliberately not exposed**:
+  `tenant: "shared"` bypasses the draft/review queue (created directly as
+  Approved), outside ADR-0028's phase-1 create-only localdev scope. The
+  per-call `Idempotency-Key` satisfies ADR-0028's "generated per create
+  request"; it does **not** de-duplicate retries across calls, though the
+  server's near-duplicate detection returns `409` with the existing entry, which
+  the tool surfaces so the caller can reuse it.
+- **Readiness route:** `GET /health/ready` (200 ⇒ ready).
+- **Credential header:** `Authorization: Bearer <key>` (the only scheme
   agent-expertise-api's ApiKey mode accepts — #486).
-
-These are single-edit constants and will be reconciled against a running API
-instance before the client is declared production-usable.
 
 ## Tests
 

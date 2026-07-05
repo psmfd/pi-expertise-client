@@ -22,6 +22,8 @@ export interface ApiResponse {
   statusText: string;
   text: string;
   truncated: boolean;
+  /** Value of the `Retry-After` response header, when the server sent one (e.g. on 429). */
+  retryAfter?: string;
 }
 
 export interface ApiGetOptions {
@@ -37,6 +39,19 @@ export interface ApiPostOptions {
   fetchImpl?: typeof fetch;
 }
 
+/**
+ * Bounded slice of an error-response body for diagnostics (e.g. ProblemDetails
+ * `title`/`status`; `detail` is scrubbed outside Development server-side).
+ * Returns an empty string for an empty body, else ` — <slice>` for appending
+ * to a refusal reason.
+ */
+export function errorDetail(text: string, cap = 500): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return "";
+  const slice = trimmed.length > cap ? `${trimmed.slice(0, cap)}…` : trimmed;
+  return ` — ${slice}`;
+}
+
 /** Bound a response body to MAX_BODY_BYTES and shape an `ApiResponse`. */
 async function boundResponse(res: Response): Promise<ApiResponse> {
   const raw = await res.text();
@@ -47,12 +62,14 @@ async function boundResponse(res: Response): Promise<ApiResponse> {
     text = buf.subarray(0, MAX_BODY_BYTES).toString("utf-8");
     truncated = true;
   }
+  const retryAfter = res.headers?.get?.("retry-after");
   return {
     ok: res.ok,
     status: res.status,
     statusText: res.statusText,
     text,
     truncated,
+    ...(retryAfter ? { retryAfter } : {}),
   };
 }
 

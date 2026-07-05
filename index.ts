@@ -22,6 +22,7 @@ import { Type } from "typebox";
 
 import { shouldSkipRegistration } from "./lib/coexist.ts";
 import { buildClientConfig } from "./lib/config.ts";
+import { ENTRY_TYPES, SEVERITIES } from "./lib/create.ts";
 import { loadEnvLocal, resolveEnvPath } from "./lib/env.ts";
 import { checkReady } from "./lib/health.ts";
 import { runCreate } from "./lib/run-create.ts";
@@ -58,23 +59,26 @@ export default function (pi: ExtensionAPI) {
     name: "expertise_search",
     label: "Expertise Search",
     description:
-      "Search the local agent-expertise-api for expertise entries. " +
-      "Loopback-only and API-key-authenticated (ADR-0028). Read-only; " +
-      "returns advisory results that must be cross-checked against the " +
-      "static agent catalog.",
+      "Semantic (vector-similarity) search of the local agent-expertise-api " +
+      "for expertise entries. Loopback-only and API-key-authenticated " +
+      "(ADR-0028). Read-only; returns advisory results that must be " +
+      "cross-checked against the static agent catalog. Rate-limited to " +
+      "10 requests/min — do not retry a 429 immediately.",
     promptSnippet:
       "Search local agent-expertise-api with expertise_search (advisory; loopback-only).",
     promptGuidelines: [
       "expertise_search returns advisory expertise; cross-check results against the agent catalog before acting.",
       "expertise_search talks only to a local loopback agent-expertise-api and requires PI_EXPERTISE_API_KEY (ADR-0028).",
+      "expertise_search is semantic search rate-limited to 10 requests/min; on a rate-limit refusal, wait rather than retrying immediately.",
     ],
     parameters: Type.Object({
       query: Type.String({
-        description: "Free-text expertise query.",
+        description: "Free-text expertise query (semantic vector search).",
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Optional maximum number of results.",
+          description:
+            "Optional maximum number of results (1-100; default 10, clamped).",
         }),
       ),
     }),
@@ -121,20 +125,43 @@ export default function (pi: ExtensionAPI) {
       "Create a single entry in the local agent-expertise-api. Loopback-only " +
       "and API-key-authenticated (ADR-0028). Create-only (no update/delete) " +
       "and gated behind PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1; the body is " +
-      "scanned for credentials before any network call.",
+      "scanned for credentials before any network call. A near-duplicate " +
+      "entry is rejected by the server (HTTP 409) with the existing entry " +
+      "returned — reuse it rather than retrying.",
     promptSnippet:
       "Create local agent-expertise-api entries with expertise_create (loopback-only; opt-in write).",
     promptGuidelines: [
       "expertise_create writes to a local loopback agent-expertise-api and requires PI_EXPERTISE_API_KEY plus PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1 (ADR-0028).",
       "expertise_create is create-only and refuses bodies containing credential patterns; never put secrets in an expertise entry.",
+      "expertise_create requires deliberate entryType and severity classification; if the server reports a near-duplicate (409), reuse the existing entry instead of retrying.",
     ],
     parameters: Type.Object({
+      domain: Type.String({
+        description: "Domain/topic area of the entry, e.g. 'kafka' or 'ansible'.",
+      }),
       title: Type.String({
         description: "Short title of the expertise entry.",
       }),
-      content: Type.String({
+      body: Type.String({
         description: "Body content of the expertise entry.",
       }),
+      entryType: Type.Union(
+        ENTRY_TYPES.map((v) => Type.Literal(v)),
+        {
+          description:
+            "Entry classification: IssueFix (a solved problem), Caveat (a " +
+            "gotcha/limitation), Requirement (a hard constraint), or Pattern " +
+            "(a reusable approach). Choose deliberately; there is no default.",
+        },
+      ),
+      severity: Type.Union(
+        SEVERITIES.map((v) => Type.Literal(v)),
+        {
+          description:
+            "Severity of the captured knowledge: Info, Warning, or Critical. " +
+            "Choose deliberately; there is no default.",
+        },
+      ),
       tags: Type.Optional(
         Type.Array(Type.String(), {
           description: "Optional free-form tags.",
@@ -142,7 +169,12 @@ export default function (pi: ExtensionAPI) {
       ),
       source: Type.Optional(
         Type.String({
-          description: "Optional provenance, e.g. 'pi-session'.",
+          description: "Optional provenance; defaults to 'pi-session'.",
+        }),
+      ),
+      sourceVersion: Type.Optional(
+        Type.String({
+          description: "Optional version of the source the entry derives from.",
         }),
       ),
     }),
@@ -153,10 +185,16 @@ export default function (pi: ExtensionAPI) {
       const result = await runCreate(
         cfg.config,
         {
+          domain: params.domain,
           title: params.title,
-          content: params.content,
+          body: params.body,
+          entryType: params.entryType,
+          severity: params.severity,
           ...(params.tags !== undefined ? { tags: params.tags } : {}),
           ...(params.source !== undefined ? { source: params.source } : {}),
+          ...(params.sourceVersion !== undefined
+            ? { sourceVersion: params.sourceVersion }
+            : {}),
         },
         signal ? { signal } : {},
       );
@@ -176,6 +214,7 @@ export default function (pi: ExtensionAPI) {
           status: result.status,
           bytes: Buffer.byteLength(result.text, "utf-8"),
           truncated: result.truncated,
+          domain: params.domain,
           title: params.title,
         },
       };

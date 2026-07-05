@@ -17,7 +17,9 @@
 
 import type { CreateParams } from "./create.ts";
 
-// Keep this in lockstep with agent/extensions/secrets-guard/index.ts.
+// Keep this in lockstep with agent/extensions/secrets-guard/index.ts and
+// hooks/secrets-guard.sh (ADR-0071; framework ADR-095 for the JWT/Bearer
+// detectors). validate.sh check_secret_pattern_lockstep enforces parity.
 const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   {
     name: "pem-private-key",
@@ -32,17 +34,43 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   // body to match the longer ghs_ format — in lockstep with secrets-guard.
   { name: "github-token", re: /gh[oprsu]_[A-Za-z0-9]{36,}/ },
   { name: "github-pat-fine-grained", re: /github_pat_[A-Za-z0-9_]{82,}/ },
+  // Signed JWT — header.payload.signature, each segment length-bounded (`eyJ` is
+  // base64url `{"`). Signed tokens only; unsigned/alg:none is out of scope
+  // (framework ADR-095 / #64). The pattern text does not match its own regex.
+  {
+    name: "signed-jwt",
+    // Segments upper-bounded ({10,4000}) so the chained `{n,}\.` shape cannot
+    // drive O(n²) backtracking on adversarial ~512KB non-dot input in the V8
+    // engine; a real JWT segment is far under 4000 chars (ADR-0071).
+    re: /eyJ[A-Za-z0-9_-]{10,4000}\.eyJ[A-Za-z0-9_-]{10,4000}\.[A-Za-z0-9_-]{10,4000}/,
+  },
+  // Authorization: Bearer <20+ token chars>. Case-insensitive on both words; the
+  // length bound keeps placeholders (`Bearer %s`, `Bearer <key>`, `Bearer $VAR`)
+  // below the threshold (framework ADR-095).
+  {
+    name: "authorization-bearer",
+    re: /[Aa]uthorization: [Bb]earer [A-Za-z0-9._~+/=-]{20,}/,
+  },
 ];
 
-/** Collect each string field/element of the create body for scanning. */
+/**
+ * Collect each string field/element of the create body for scanning.
+ *
+ * Deliberately generic (every own string property plus string-array elements)
+ * rather than a hardcoded field list: #489 showed that a field list drifts
+ * when `CreateParams` gains or renames fields, silently exempting the new
+ * fields from the scan. Whatever shape `CreateParams` takes, every string it
+ * carries is scanned.
+ */
 function collectStrings(body: CreateParams): string[] {
   const out: string[] = [];
-  if (typeof body.title === "string") out.push(body.title);
-  if (typeof body.content === "string") out.push(body.content);
-  if (typeof body.source === "string") out.push(body.source);
-  if (Array.isArray(body.tags)) {
-    for (const tag of body.tags) {
-      if (typeof tag === "string") out.push(tag);
+  for (const value of Object.values(body)) {
+    if (typeof value === "string") {
+      out.push(value);
+    } else if (Array.isArray(value)) {
+      for (const el of value) {
+        if (typeof el === "string") out.push(el);
+      }
     }
   }
   return out;
