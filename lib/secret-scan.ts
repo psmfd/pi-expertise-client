@@ -91,3 +91,23 @@ export function scanForSecrets(body: CreateParams): string[] {
   }
   return [...matched];
 }
+
+/**
+ * Sibling entry point for consumers that hold a raw string rather than a
+ * `CreateParams`-shaped object (canonicalizer pre-write gate, #598/#608).
+ * Runs the same `SECRET_PATTERNS` set against the entire string; returns the
+ * deduplicated category names of any matches. Never returns the matched
+ * secret text — so a caller's refusal message can safely echo the result.
+ *
+ * Kept in this file (not extracted to `shared/`) so the pattern set remains
+ * single-sourced within a lockstep target that `scripts/validate.sh`
+ * §6b-bis already verifies. Extracting to `shared/` would add a fourth
+ * lockstep site with no compensating benefit.
+ */
+export function scanRawString(text: string): string[] {
+  const matched = new Set<string>();
+  for (const { name, re } of SECRET_PATTERNS) {
+    if (re.test(text)) matched.add(name);
+  }
+  return [...matched];
+}
