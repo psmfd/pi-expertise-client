@@ -3,7 +3,8 @@
  *
  * Asserts the body guard matches each credential category and returns category
  * NAMES only — never the matched secret text. #489 regression coverage: every
- * string field of the v1.1.0 create body (including domain and sourceVersion)
+ * string field of the create body (v1.1.0, unchanged through v1.4.1; including
+ * domain and sourceVersion)
  * is scanned — a hardcoded field list previously let renamed/new fields bypass
  * the guard silently.
  *

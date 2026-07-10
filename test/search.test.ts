@@ -1,7 +1,8 @@
 /**
  * expertise-client — expertise_search tests (ADR-0028, #489).
  *
- * Pins the REAL agent-expertise-api v1.1.0 semantic-search contract
+ * Pins the REAL agent-expertise-api semantic-search contract (v1.1.0, re-verified
+ * unchanged at v1.4.1)
  * (`GET /expertise/search/semantic?q=...&limit=...`), verified against the
  * server source — not an assumed shape. Includes a secret-non-disclosure
  * assertion: the API key is sent as a header but must never appear in

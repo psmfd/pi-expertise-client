@@ -123,7 +123,12 @@ All of the following are **hard refusals** (fail closed, no override in phase 1)
 
 ## API contract
 
-Verified against `agent-expertise-api` v1.1.0 (live end-to-end, #489). These
+Verified against `agent-expertise-api` v1.1.0 (live end-to-end, #489) and
+re-verified unchanged against v1.4.1 (2026-07-10): the v1.2.0–v1.4.1 window
+added only optional, non-breaking surface — `includeDeprecated` on semantic
+search, `tenant`/`originAuthorPrincipal` on create (all deliberately not
+exposed, same phase-1 rationale as below), plus a LAN-only static-JWKS auth
+mode that does not apply to this loopback client (tracked as #645). These
 are single-edit constants centralized in `lib/search.ts` / `lib/create.ts`.
 
 - **Search route:** `GET /expertise/search/semantic?q=...&limit=...` — semantic

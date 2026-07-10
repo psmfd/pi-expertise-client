@@ -1,13 +1,15 @@
 /**
  * expertise-client — read-side `expertise_search` (ADR-0028).
  *
- * Targets the SEMANTIC search endpoint of agent-expertise-api v1.1.0
+ * Targets the SEMANTIC search endpoint of agent-expertise-api
  * (`GET /expertise/search/semantic`), verified against the live API and the
- * server source (#489): query param is `q`, `limit` is clamped server-side to
+ * server source at v1.1.0 (#489) and re-verified unchanged at v1.4.1
+ * (2026-07-10): query param is `q`, `limit` is clamped server-side to
  * [1, 100], and the endpoint is governed by a token-bucket rate limit of
- * 10 requests/min per principal (429 with Retry-After, no queuing). The
- * keyword FTS endpoint (`/expertise/search`) takes only `q` +
- * `includeDeprecated` and is deliberately not exposed in phase 1.
+ * 10 requests/min per principal (429 with Retry-After, no queuing). v1.3.0
+ * added an optional `includeDeprecated` query param — deliberately not
+ * exposed, same phase-1 rationale as the keyword FTS endpoint
+ * (`/expertise/search`, `q` + `includeDeprecated`), which is also unexposed.
  */
 
 import type { ClientConfig } from "./config.ts";

@@ -3,7 +3,8 @@
  *
  * Covers the create policy ladder (opt-in gate → body-secret scan → readiness
  * → create) at the runCreate dispatch boundary, plus the transport-level
- * createExpertise against the REAL agent-expertise-api v1.1.0 body contract
+ * createExpertise against the REAL agent-expertise-api body contract (v1.1.0,
+ * re-verified unchanged at v1.4.1)
  * ({domain, title, body, entryType, severity, source, tags?, sourceVersion?}
  * — no tenant), 409 near-duplicate surfacing, Idempotency-Key uniqueness, and
  * fail-closed behavior. Secret-non-disclosure: the API key is sent as a

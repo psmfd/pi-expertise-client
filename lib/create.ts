@@ -2,9 +2,12 @@
  * expertise-client — create-only write path `expertise_create` (ADR-0028, #318).
  *
  * Transport-only: POSTs a single expertise entry to the local API. The body
- * schema matches agent-expertise-api v1.1.0's `CreateExpertiseRequest`,
- * verified against the server source (#489): required `domain`, `title`,
- * `body`, `entryType`, `severity`, `source`; optional `tags`, `sourceVersion`.
+ * schema matches agent-expertise-api's `CreateExpertiseRequest`, verified
+ * against the server source at v1.1.0 (#489) and re-verified unchanged at
+ * v1.4.1 (2026-07-10): required `domain`, `title`, `body`, `entryType`,
+ * `severity`, `source`; optional `tags`, `sourceVersion`. v1.3.0 added
+ * optional `tenant` (see below) and `originAuthorPrincipal` (aggregator
+ * up-sync attribution) — both deliberately not exposed here.
  * Field names are sent camelCase (server binding is case-insensitive, Web
  * defaults); enum values are the server's literal member names.
  *
@@ -42,7 +45,7 @@ export type Severity = (typeof SEVERITIES)[number];
 /** Fallback provenance when the caller does not name one (server requires non-blank). */
 export const DEFAULT_SOURCE = "pi-session";
 
-/** Create-entry shape, matching `CreateExpertiseRequest` (v1.1.0). */
+/** Create-entry shape, matching `CreateExpertiseRequest` (v1.1.0, unchanged through v1.4.1). */
 export interface CreateParams {
   /** Required. Domain/topic area of the entry (e.g. "kafka"). */
   domain: string;
