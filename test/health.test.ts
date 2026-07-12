@@ -5,8 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import type { ClientConfig } from "../lib/config.ts";
-import { checkReady } from "../lib/health.ts";
+import type { ClientConfig } from "../shared/expertise-api-config.ts";
+import { checkReady } from "../shared/expertise-api-health.ts";
 
 const CONFIG: ClientConfig = {
   baseUrl: "http://127.0.0.1:8080",

@@ -17,7 +17,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import type { ClientConfig } from "../lib/config.ts";
+import type { ClientConfig } from "../shared/expertise-api-config.ts";
 import type { CreateParams } from "../lib/create.ts";
 import { CREATE_PATH, DEFAULT_SOURCE, createExpertise } from "../lib/create.ts";
 import { runCreate } from "../lib/run-create.ts";

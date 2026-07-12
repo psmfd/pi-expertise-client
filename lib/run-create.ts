@@ -15,10 +15,10 @@
  * stay fast and hermetic.
  */
 
-import type { ClientConfig } from "./config.ts";
+import type { ClientConfig } from "../shared/expertise-api-config.ts";
 import type { CreateParams, CreateResult } from "./create.ts";
 import { createExpertise } from "./create.ts";
-import { checkReady } from "./health.ts";
+import { checkReady } from "../shared/expertise-api-health.ts";
 import { scanForSecrets } from "./secret-scan.ts";
 
 export type RunCreateResult =

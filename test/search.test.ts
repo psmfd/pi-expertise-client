@@ -12,8 +12,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import type { ClientConfig } from "../lib/config.ts";
-import { SEARCH_PATH, searchExpertise } from "../lib/search.ts";
+import type { ClientConfig } from "../shared/expertise-api-config.ts";
+import { SEARCH_PATH, searchExpertise } from "../shared/expertise-api-search.ts";
 
 const SECRET = "super-secret-api-key";
 const CONFIG: ClientConfig = {

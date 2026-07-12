@@ -17,7 +17,7 @@ import {
   ENV_BASE_URL,
   ENV_API_KEY,
   ENV_ALLOW_WRITE,
-} from "../lib/config.ts";
+} from "../shared/expertise-api-config.ts";
 
 test("parseEnvFile parses KEY=VALUE, ignores comments/blank, strips quotes", () => {
   const parsed = parseEnvFile(

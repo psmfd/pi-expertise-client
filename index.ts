@@ -21,12 +21,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { shouldSkipRegistration } from "./lib/coexist.ts";
-import { buildClientConfig } from "./lib/config.ts";
+import { buildClientConfig } from "./shared/expertise-api-config.ts";
 import { ENTRY_TYPES, SEVERITIES } from "./lib/create.ts";
 import { loadEnvLocal, resolveEnvPath } from "./lib/env.ts";
-import { checkReady } from "./lib/health.ts";
+import { checkReady } from "./shared/expertise-api-health.ts";
 import { runCreate } from "./lib/run-create.ts";
-import { searchExpertise } from "./lib/search.ts";
+import { searchExpertise } from "./shared/expertise-api-search.ts";
 
 function refusal(tool: string, reason: string) {
   return {

@@ -30,8 +30,8 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { ClientConfig } from "./config.ts";
-import { apiPost, errorDetail } from "./http.ts";
+import type { ClientConfig } from "../shared/expertise-api-config.ts";
+import { apiPost, errorDetail } from "../shared/expertise-api-http.ts";
 
 export const CREATE_PATH = "/expertise";
 
