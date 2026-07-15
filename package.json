@@ -22,9 +22,10 @@
     "@earendil-works/pi-coding-agent": ">=0.75"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.79.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
     "@types/node": "^25.9.3",
     "tsx": "^4.19.2",
+    "typebox": "1.1.38",
     "typescript": "^6.0.3"
   }
 }
