@@ -17,6 +17,11 @@ import {
   ENV_BASE_URL,
   ENV_API_KEY,
   ENV_ALLOW_WRITE,
+  ENV_UPSTREAM_BASE_URL,
+  ENV_UPSTREAM_TOKEN,
+  ENV_UPSTREAM_SECRETS_FILE,
+  resolveUpstreamSecretsPath,
+  loadUpstreamSecrets,
 } from "../shared/expertise-api-config.ts";
 
 test("parseEnvFile parses KEY=VALUE, ignores comments/blank, strips quotes", () => {
@@ -51,6 +56,23 @@ test("loadEnvLocal reads and parses an existing file", async () => {
   }
 });
 
+test("loadUpstreamSecrets reads the explicit upstream file override", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exp-upstream-env-"));
+  try {
+    const path = join(dir, "secrets.env");
+    await fs.writeFile(
+      path,
+      "EXPERTISE_API_BASE_URL=https://expertise.lan.example\n" +
+        "EXPERTISE_API_TOKEN=test-token\n",
+    );
+    const loaded = loadUpstreamSecrets({ [ENV_UPSTREAM_SECRETS_FILE]: path });
+    assert.equal(loaded[ENV_UPSTREAM_BASE_URL], "https://expertise.lan.example");
+    assert.equal(loaded[ENV_UPSTREAM_TOKEN], "test-token");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("isLoopbackHost accepts loopback forms and rejects others", () => {
   for (const h of ["localhost", "127.0.0.1", "127.0.0.2", "::1", "[::1]"]) {
     assert.equal(isLoopbackHost(h), true, h);
@@ -72,7 +94,8 @@ test("buildClientConfig: process.env overrides .env.local overrides default", ()
   const r = buildClientConfig(processEnv, fileEnv);
   assert.ok(r.ok);
   assert.equal(r.config.baseUrl, "http://127.0.0.1:7000");
-  assert.equal(r.config.apiKey, "proc-key");
+  assert.equal(r.config.bearerToken, "proc-key");
+  assert.equal(r.config.authMode, "local-api-key");
 });
 
 test("buildClientConfig: defaults base URL when neither source sets it", () => {
@@ -84,16 +107,112 @@ test("buildClientConfig: defaults base URL when neither source sets it", () => {
 test("buildClientConfig: .env.local fills in when process.env is unset", () => {
   const r = buildClientConfig({}, { [ENV_API_KEY]: "file-key" });
   assert.ok(r.ok);
-  assert.equal(r.config.apiKey, "file-key");
+  assert.equal(r.config.bearerToken, "file-key");
 });
 
-test("buildClientConfig: refuses a non-loopback base URL", () => {
+test("buildClientConfig: refuses a non-loopback legacy base URL", () => {
   const r = buildClientConfig(
     { [ENV_BASE_URL]: "http://expertise.example.com", [ENV_API_KEY]: "k" },
     {},
   );
   assert.equal(r.ok, false);
   if (!r.ok) assert.match(r.reason, /loopback/i);
+});
+
+test("buildClientConfig: accepts upstream HTTPS bearer config", () => {
+  const r = buildClientConfig(
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example/path",
+      [ENV_UPSTREAM_TOKEN]: "header.payload.signature",
+    },
+    { [ENV_API_KEY]: "legacy-key" },
+  );
+  assert.ok(r.ok);
+  assert.equal(r.config.baseUrl, "https://expertise.lan.example");
+  assert.equal(r.config.bearerToken, "header.payload.signature");
+  assert.equal(r.config.authMode, "upstream-bearer");
+});
+
+test("buildClientConfig: upstream process env overrides upstream secrets file", () => {
+  const r = buildClientConfig(
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://process.example",
+      [ENV_UPSTREAM_TOKEN]: "process-token",
+    },
+    {},
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://file.example",
+      [ENV_UPSTREAM_TOKEN]: "file-token",
+    },
+  );
+  assert.ok(r.ok);
+  assert.equal(r.config.baseUrl, "https://process.example");
+  assert.equal(r.config.bearerToken, "process-token");
+});
+
+test("buildClientConfig: upstream secrets file supplies the bearer profile", () => {
+  const r = buildClientConfig(
+    {},
+    {},
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN]: "file-token",
+    },
+  );
+  assert.ok(r.ok);
+  assert.equal(r.config.authMode, "upstream-bearer");
+  assert.equal(r.config.bearerToken, "file-token");
+});
+
+test("buildClientConfig: partial upstream config fails instead of falling back", () => {
+  const r = buildClientConfig(
+    { [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example" },
+    { [ENV_API_KEY]: "legacy-key" },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.reason, /must both be set/i);
+});
+
+test("buildClientConfig: upstream remote cleartext and URL credentials are refused", () => {
+  const cleartext = buildClientConfig(
+    {
+      [ENV_UPSTREAM_BASE_URL]: "http://expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN]: "token",
+    },
+    {},
+  );
+  assert.equal(cleartext.ok, false);
+  if (!cleartext.ok) assert.match(cleartext.reason, /https/i);
+
+  const userinfo = buildClientConfig(
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://user:pass@expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN]: "token",
+    },
+    {},
+  );
+  assert.equal(userinfo.ok, false);
+  if (!userinfo.ok) assert.match(userinfo.reason, /URL credentials/i);
+});
+
+test("buildClientConfig: upstream loopback HTTP remains valid for development", () => {
+  const r = buildClientConfig(
+    {
+      [ENV_UPSTREAM_BASE_URL]: "http://127.0.0.1:8080",
+      [ENV_UPSTREAM_TOKEN]: "dev:team:expertise.read",
+    },
+    {},
+  );
+  assert.ok(r.ok);
+  assert.equal(r.config.authMode, "upstream-bearer");
+});
+
+test("resolveUpstreamSecretsPath uses the upstream default or explicit override", () => {
+  assert.match(resolveUpstreamSecretsPath({}), /\.config\/expertise-api\/secrets\.env$/);
+  assert.equal(
+    resolveUpstreamSecretsPath({ [ENV_UPSTREAM_SECRETS_FILE]: "/tmp/custom.env" }),
+    "/tmp/custom.env",
+  );
 });
 
 test("buildClientConfig: refuses a missing API key", () => {

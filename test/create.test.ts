@@ -27,8 +27,14 @@ const AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE";
 
 const WRITE_CONFIG: ClientConfig = {
   baseUrl: "http://127.0.0.1:8080",
-  apiKey: SECRET,
+  bearerToken: SECRET,
+  authMode: "local-api-key",
   allowWrite: true,
+};
+const OIDC_WRITE_CONFIG: ClientConfig = {
+  ...WRITE_CONFIG,
+  baseUrl: "https://expertise.lan.example",
+  authMode: "upstream-bearer",
 };
 const NO_WRITE_CONFIG: ClientConfig = { ...WRITE_CONFIG, allowWrite: false };
 
@@ -147,6 +153,8 @@ test("createExpertise POSTs the real v1.1.0 body shape with Bearer auth and Idem
   assert.equal(cap.url?.pathname, CREATE_PATH);
   assert.equal(cap.headers?.["authorization"], `Bearer ${SECRET}`);
   assert.equal(cap.headers?.["content-type"], "application/json");
+  assert.equal(cap.headers?.["x-actor-class"], "agent");
+  assert.match(cap.headers?.["user-agent"] ?? "", /pi-coding-agent/);
   assert.ok(cap.headers?.["Idempotency-Key"]);
   const parsed = JSON.parse(cap.body ?? "{}") as Record<string, unknown>;
   assert.equal(parsed.domain, "kafka");
@@ -201,6 +209,24 @@ test("createExpertise surfaces a 409 as near-duplicate with the existing entry",
     assert.match(r.reason, /409/);
     assert.match(r.reason, /tune producers/);
     assert.equal(r.reason.includes(SECRET), false);
+  }
+});
+
+test("createExpertise gives static-OIDC replacement guidance on HTTP 401", async () => {
+  const cap: Captured = {};
+  const r = await createExpertise(OIDC_WRITE_CONFIG, entry(), {
+    fetchImpl: capturingFetch(
+      cap,
+      401,
+      JSON.stringify({ title: `invalid token ${SECRET}` }),
+    ),
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.match(r.reason, /may be expired or invalid/i);
+    assert.match(r.reason, /mint_token\.py/);
+    assert.equal(r.reason.includes(SECRET), false);
+    assert.match(r.reason, /REDACTED:credential/);
   }
 });
 

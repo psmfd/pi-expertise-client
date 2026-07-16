@@ -1,10 +1,11 @@
-> **First-party** pi extension. Local client for `agent-expertise-api`. See [ADR-0028](https://github.com/psmfd/pi-config/blob/main/adrs/0028-agent-expertise-api-client.md) and tracking issue #149.
+> **First-party** pi extension for `agent-expertise-api`. See [ADR-0103](https://github.com/psmfd/pi-config/blob/main/adrs/0103-upstream-expertise-static-oidc-consumption.md) and tracking issue #645.
 
 # expertise-client
 
-A local-only pi extension that talks to a developer's locally-running
-[`agent-expertise-api`](https://github.com/psmfd/agent-expertise-api). Phase 1
-(per ADR-0028) is **Linux/macOS only, loopback only, API-key authenticated**.
+A pi extension for searching and creating entries in
+[`agent-expertise-api`](https://github.com/psmfd/agent-expertise-api). It retains
+the original loopback/API-key development profile and consumes upstream's
+pre-provisioned bearer-token contract for HTTPS/static-OIDC deployments.
 
 This extension registers the read-side tool `expertise_search` (#317) and the
 create-only `expertise_create` tool (#318).
@@ -19,17 +20,28 @@ Try it first without installing: `pi -e git:github.com/psmfd/pi-expertise-client
 
 ## Prerequisite — a running `agent-expertise-api`
 
-This extension is a **client**. It does nothing on its own: it requires a
-separately-obtained [`agent-expertise-api`](https://github.com/psmfd/agent-expertise-api)
-service **running locally on loopback** before either tool works. You must:
+This extension is a **client**. Choose one operator-provisioned profile:
 
-1. Obtain and run `agent-expertise-api` (a separate repository) on a loopback
-   origin (e.g. `http://127.0.0.1:8080`).
-2. Copy `.env.example` to `.env.local` (gitignored) and set `PI_EXPERTISE_API_BASE_URL`
-   (loopback only) and `PI_EXPERTISE_API_KEY`. Writes additionally require
-   `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1`.
+1. **Local development (retained):** run the API on loopback, copy
+   `.env.example` to `.env.local`, and set `PI_EXPERTISE_API_KEY`.
+2. **Upstream bearer/static OIDC:** configure the API's embedded JWKS issuer,
+   mint a short-lived client JWT offline with upstream `scripts/mint_token.py`,
+   and write the HTTPS endpoint and token to the upstream consumer file:
 
-Without that service reachable, the tools return a health/connection error.
+   ```sh
+   mkdir -p ~/.config/expertise-api
+   # Write these without exposing the JWT in shell history or chat:
+   # EXPERTISE_API_BASE_URL=https://expertise.lan.example
+   # EXPERTISE_API_TOKEN=<offline-minted-JWT>
+   chmod 600 ~/.config/expertise-api/secrets.env
+   ```
+
+   A read-only pi token should carry `read,agent` (`expertise.read` plus
+   `expertise.agent`). Minting and rotation remain operator actions; this
+   extension never creates, refreshes, or writes a token. Follow upstream's
+   [LAN static-OIDC runbook](https://github.com/psmfd/agent-expertise-api/blob/dev/deploy/lan-static-oidc/RUNBOOK.md).
+
+Without a ready service and a complete profile, tools return a refusal.
 
 ## Coexistence (ADR-0029)
 
@@ -53,44 +65,55 @@ fails open (registers normally) on any read error. Set
 
 | Tool | Kind | Notes |
 |---|---|---|
-| `expertise_search` | read-only | Semantic (vector-similarity) query of the local API. Output is **advisory** and must be cross-checked against the static agent catalog. Rate-limited to 10 requests/min server-side. |
+| `expertise_search` | read-only | Semantic query of the configured API. Its prompt contract directs pi to search before non-trivial coding work. Output is **advisory** and must be cross-checked against code/docs. Rate-limited to 10 requests/min server-side. |
 | `expertise_create` | create-only write | Creates a single entry. Double-gated: requires `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1` **and** a clean body-secret scan. No update/delete/archive/approve. |
 
 ## Configuration
 
-Configuration comes from `process.env` and a single FIXED file —
-`agent/extensions/expertise-client/.env.local` — and nothing else. The
-extension never walks parent directories and never reads a repository's own
-`.env`, so a checked-out project cannot redirect the endpoint or supply
-credentials.
+Configuration is read only from process environment and fixed operator-owned
+files; the extension never walks a repository for `.env` files.
 
-Precedence: `process.env` > `.env.local` > built-in defaults.
+### Upstream bearer profile (selected when either upstream variable is present)
+
+Precedence: process env > `~/.config/expertise-api/secrets.env`.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `PI_EXPERTISE_API_BASE_URL` | no | `http://127.0.0.1:8080` | Loopback origin of the local API. Non-loopback hosts are refused. |
-| `PI_EXPERTISE_API_KEY` | **yes** | — | Sent as `Authorization: Bearer` on every call. Never logged or surfaced. |
-| `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Opt-in for `expertise_create`. Must be `1` to enable create. Ignored by search. |
-| `SKIP_EXPERTISE_CLIENT` | no | `0` | Override: when truthy, the client registers no tools (see [Coexistence](#coexistence-adr-0029)). |
+| `EXPERTISE_API_BASE_URL` | **yes** | — | API origin. Non-loopback endpoints require HTTPS. |
+| `EXPERTISE_API_TOKEN` | **yes** | — | Pre-provisioned bearer: static-OIDC JWT, LocalDev token, or compatible upstream credential. |
+| `EXPERTISE_API_SECRETS_FILE` | no | `~/.config/expertise-api/secrets.env` | Explicit operator-owned file override. |
 
-Copy `.env.example` to `.env.local` and fill in your key:
+A partial upstream pair fails closed instead of falling back to a legacy key.
+The token is never logged or returned. Authenticated requests also send
+`X-Actor-Class: agent` and `User-Agent: pi-coding-agent/pi-expertise-client`;
+a JWT needs `expertise.agent` for authoritative Agent audit classification.
+The documented anonymous `/health/ready` preflight carries no bearer.
 
-```bash
-cp agent/extensions/expertise-client/.env.example agent/extensions/expertise-client/.env.local
-# then edit .env.local and set PI_EXPERTISE_API_KEY
-```
+### Legacy local profile
+
+Precedence: process env > extension `.env.local` > defaults.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `PI_EXPERTISE_API_BASE_URL` | no | `http://127.0.0.1:8080` | Loopback origin; non-loopback hosts are refused in this profile. |
+| `PI_EXPERTISE_API_KEY` | **yes** | — | Local Development API key. |
+| `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Explicit create opt-in in either profile. |
+| `SKIP_EXPERTISE_CLIENT` | no | `0` | Stand down to avoid duplicate tool registration. |
 
 `.env.local` is gitignored. Only `.env.example` is tracked.
 
 ## Refusal policy (per-rule)
 
-All of the following are **hard refusals** (fail closed, no override in phase 1):
+All of the following are **hard refusals** under the selected profile:
 
 | Condition | Result |
 |---|---|
-| `PI_EXPERTISE_API_BASE_URL` is not a valid URL | refuse |
-| base URL host is not loopback (`localhost` / `127.0.0.0/8` / `::1`) | refuse |
-| `PI_EXPERTISE_API_KEY` missing/empty | refuse |
+| selected profile's base URL is invalid | refuse |
+| legacy profile is non-loopback | refuse |
+| upstream profile is non-loopback cleartext HTTP | refuse |
+| upstream base URL contains URL credentials | refuse |
+| selected profile's credential pair is missing/partial | refuse |
+| upstream request returns 401 | refuse with safe re-mint/replacement guidance |
 | `/health/ready` returns non-200 or is unreachable | refuse |
 | search request errors or returns non-2xx | refuse |
 | `expertise_create` called with `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` != `1` | refuse (before any network call) |
@@ -100,8 +123,13 @@ All of the following are **hard refusals** (fail closed, no override in phase 1)
 
 ## Trust boundary
 
-- Loopback is a network locality boundary, **not** an authentication boundary —
-  hence the mandatory API key even for local calls.
+- Loopback is a locality boundary, not authentication; the local API still
+  requires its API key. Remote bearer transport requires HTTPS.
+- Static-OIDC JWT minting, signing-key custody, distribution, expiry, and
+  rotation stay outside pi and follow upstream ADR-015/runbook.
+- The parent process owns `EXPERTISE_API_TOKEN`; subagent spawning strips it
+  and blocks default secrets-file discovery. Canonical results are parent-
+  fetched and injected as user-role task content.
 - Returned content is **untrusted tool-call output**. It is surfaced only as the
   structured return value of `expertise_search`, framed as advisory, and is
   **never** injected as system context (see
@@ -123,13 +151,9 @@ All of the following are **hard refusals** (fail closed, no override in phase 1)
 
 ## API contract
 
-Verified against `agent-expertise-api` v1.1.0 (live end-to-end, #489) and
-re-verified unchanged against v1.4.1 (2026-07-10): the v1.2.0–v1.4.1 window
-added only optional, non-breaking surface — `includeDeprecated` on semantic
-search, `tenant`/`originAuthorPrincipal` on create (all deliberately not
-exposed, same phase-1 rationale as below), plus a LAN-only static-JWKS auth
-mode that does not apply to this loopback client (tracked as #645). These
-are single-edit constants centralized in `lib/search.ts` / `lib/create.ts`.
+Verified against `agent-expertise-api` through v1.4.1. The static-JWKS mode
+added in that line is now consumed through the upstream pre-provisioned bearer
+contract; the semantic-search and create request shapes remain unchanged.
 
 - **Search route:** `GET /expertise/search/semantic?q=...&limit=...` — semantic
   vector search. `q` is required; `limit` is clamped to `[1, 100]` (client- and
@@ -147,14 +171,15 @@ are single-edit constants centralized in `lib/search.ts` / `lib/create.ts`.
   server silently defaults to `IssueFix`/`Info`, which mis-tags entries rather
   than erroring. The server's `tenant` field is **deliberately not exposed**:
   `tenant: "shared"` bypasses the draft/review queue (created directly as
-  Approved), outside ADR-0028's phase-1 create-only localdev scope. The
-  per-call `Idempotency-Key` satisfies ADR-0028's "generated per create
-  request"; it does **not** de-duplicate retries across calls, though the
+  Approved), outside ADR-0103's retained create-only scope. The
+  per-call `Idempotency-Key` satisfies ADR-0103's carried-forward
+  "generated per create request" contract; it does **not** de-duplicate retries across calls, though the
   server's near-duplicate detection returns `409` with the existing entry, which
   the tool surfaces so the caller can reuse it.
 - **Readiness route:** `GET /health/ready` (200 ⇒ ready).
-- **Credential header:** `Authorization: Bearer <key>` (the only scheme
-  agent-expertise-api's ApiKey mode accepts — #486).
+- **Credential and audit headers:** `Authorization: Bearer <credential>`,
+  `X-Actor-Class: agent`, and a stable pi `User-Agent`. The bearer is a local
+  API key in the legacy profile or the upstream-provisioned token/JWT.
 
 ## Tests
 

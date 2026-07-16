@@ -1,5 +1,5 @@
 /**
- * expertise-client — create-only write path `expertise_create` (ADR-0028, #318).
+ * expertise-client — create-only write path `expertise_create` (ADR-0103, #318).
  *
  * Transport-only: POSTs a single expertise entry to the local API. The body
  * schema matches agent-expertise-api's `CreateExpertiseRequest`, verified
@@ -17,12 +17,12 @@
  *
  * The server's `tenant` field is DELIBERATELY not exposed: `tenant: "shared"`
  * bypasses the draft/review queue (created directly as Approved), which is
- * outside ADR-0028's phase-1 create-only localdev scope. Mutating semantics
+ * outside ADR-0103's retained create-only scope. Mutating semantics
  * are strictly create-only — no update, delete, archive, or approve.
  *
  * Idempotency: the server requires an `Idempotency-Key` header; a fresh key is
  * generated per create request via `crypto.randomUUID()`. This matches
- * ADR-0028 ("generated per create request"). It does NOT provide cross-call
+ * ADR-0103 (carried forward: "generated per create request"). It does NOT provide cross-call
  * retry de-duplication — two identical create bodies sent as two calls produce
  * two distinct keys, though the server's near-duplicate detection (409) is a
  * separate content-level backstop.
@@ -30,7 +30,10 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { ClientConfig } from "../shared/expertise-api-config.ts";
+import {
+  authFailureGuidance,
+  type ClientConfig,
+} from "../shared/expertise-api-config.ts";
 import { apiPost, errorDetail } from "../shared/expertise-api-http.ts";
 
 export const CREATE_PATH = "/expertise";
@@ -109,7 +112,7 @@ export async function createExpertise(
         reason:
           `expertise create rejected as a near-duplicate (HTTP 409). ` +
           `An equivalent entry already exists — do not retry; reuse it` +
-          errorDetail(res.text, 2000),
+          errorDetail(res.text, 2000, [config.bearerToken]),
       };
     }
     if (!res.ok) {
@@ -117,7 +120,8 @@ export async function createExpertise(
         ok: false,
         reason:
           `expertise create returned HTTP ${res.status} ${res.statusText}` +
-          errorDetail(res.text),
+          (res.status === 401 ? authFailureGuidance(config) : "") +
+          errorDetail(res.text, 500, [config.bearerToken]),
       };
     }
     return {

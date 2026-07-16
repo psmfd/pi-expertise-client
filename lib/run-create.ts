@@ -1,5 +1,5 @@
 /**
- * expertise-client — create orchestration seam (ADR-0028, #318).
+ * expertise-client — create orchestration seam (ADR-0103, #318).
  *
  * `runCreate` owns the create-path policy ladder so it can be covered by fast,
  * hermetic unit tests without constructing the full pi tool object — the same
@@ -48,7 +48,7 @@ export async function runCreate(
       ok: false,
       reason:
         "local write is disabled. Set PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1 " +
-        "to opt in to create-only writes (ADR-0028).",
+        "to opt in to create-only writes (ADR-0103).",
     };
   }
 

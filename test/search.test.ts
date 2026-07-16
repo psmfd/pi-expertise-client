@@ -18,7 +18,15 @@ import { SEARCH_PATH, searchExpertise } from "../shared/expertise-api-search.ts"
 const SECRET = "super-secret-api-key";
 const CONFIG: ClientConfig = {
   baseUrl: "http://127.0.0.1:8080",
-  apiKey: SECRET,
+  bearerToken: SECRET,
+  authMode: "local-api-key",
+  allowWrite: false,
+};
+
+const OIDC_CONFIG: ClientConfig = {
+  baseUrl: "https://expertise.lan.example",
+  bearerToken: SECRET,
+  authMode: "upstream-bearer",
   allowWrite: false,
 };
 
@@ -84,7 +92,7 @@ test("searchExpertise clamps limit to the server's [1,100] range", async () => {
   assert.equal(low.url?.searchParams.get("limit"), "1");
 });
 
-test("searchExpertise sends the API key as Authorization: Bearer", async () => {
+test("searchExpertise sends bearer and agent-audit headers", async () => {
   const cap: Captured = {};
   await searchExpertise(
     CONFIG,
@@ -92,6 +100,8 @@ test("searchExpertise sends the API key as Authorization: Bearer", async () => {
     { fetchImpl: capturingFetch(cap, 200, "{}") },
   );
   assert.equal(cap.headers?.["authorization"], `Bearer ${SECRET}`);
+  assert.equal(cap.headers?.["x-actor-class"], "agent");
+  assert.match(cap.headers?.["user-agent"] ?? "", /pi-coding-agent/);
 });
 
 test("searchExpertise never leaks the API key into output", async () => {
@@ -120,6 +130,28 @@ test("searchExpertise surfaces a 429 as a rate-limit refusal with Retry-After", 
     assert.match(r.reason, /429/);
     assert.match(r.reason, /42s/);
     assert.equal(r.reason.includes(SECRET), false);
+  }
+});
+
+test("searchExpertise gives static-OIDC replacement guidance on HTTP 401", async () => {
+  const cap: Captured = {};
+  const r = await searchExpertise(
+    OIDC_CONFIG,
+    { query: "x" },
+    {
+      fetchImpl: capturingFetch(
+        cap,
+        401,
+        JSON.stringify({ title: `invalid token ${SECRET}` }),
+      ),
+    },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.match(r.reason, /may be expired or invalid/i);
+    assert.match(r.reason, /mint_token\.py/);
+    assert.equal(r.reason.includes(SECRET), false);
+    assert.match(r.reason, /REDACTED:credential/);
   }
 });
 

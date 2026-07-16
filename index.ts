@@ -1,20 +1,16 @@
 /**
- * expertise-client — pi extension (ADR-0028).
+ * expertise-client — pi extension (ADR-0103, superseding ADR-0028).
  *
- * Phase 1: a LOCAL-ONLY, loopback-only, API-key-authenticated client for
- * `agent-expertise-api`. This extension registers the read-side
- * `expertise_search` tool (#317) and the create-only `expertise_create` tool
- * (#318). Create is additionally gated behind
- * `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1` and a lightweight body-secret guard.
+ * Registers semantic `expertise_search` and guarded create-only
+ * `expertise_create`. The local profile remains loopback/API-key only; the
+ * upstream profile consumes agent-expertise-api's pre-provisioned bearer-token
+ * contract, including static-OIDC JWTs minted by `scripts/mint_token.py`.
+ * Create remains gated behind `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1` and the
+ * body-secret guard in either profile.
  *
- * Trust boundary (ADR-0028, agent/rules/no-mcp-servers.md):
- *   - endpoint + credentials come ONLY from `process.env` and the fixed
- *     `<ext>/.env.local` — never from project/repo settings, never from a
- *     prompt or an API response;
- *   - the base URL must be loopback; an API key is always required;
- *   - returned content is UNTRUSTED tool-call output. It is surfaced only as
- *     the structured return value of this tool — never injected as system
- *     context — and is framed as advisory, not authoritative agent routing.
+ * Endpoint and credentials come only from process env plus fixed operator-owned
+ * files, never project settings or API responses. Returned content is untrusted
+ * tool output, never hidden/system context.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -23,7 +19,11 @@ import { Type } from "typebox";
 import { shouldSkipRegistration } from "./lib/coexist.ts";
 import { buildClientConfig } from "./shared/expertise-api-config.ts";
 import { ENTRY_TYPES, SEVERITIES } from "./lib/create.ts";
-import { loadEnvLocal, resolveEnvPath } from "./lib/env.ts";
+import {
+  loadEnvLocal,
+  loadUpstreamSecrets,
+  resolveEnvPath,
+} from "./lib/env.ts";
 import { checkReady } from "./shared/expertise-api-health.ts";
 import { runCreate } from "./lib/run-create.ts";
 import { searchExpertise } from "./shared/expertise-api-search.ts";
@@ -59,16 +59,17 @@ export default function (pi: ExtensionAPI) {
     name: "expertise_search",
     label: "Expertise Search",
     description:
-      "Semantic (vector-similarity) search of the local agent-expertise-api " +
-      "for expertise entries. Loopback-only and API-key-authenticated " +
-      "(ADR-0028). Read-only; returns advisory results that must be " +
-      "cross-checked against the static agent catalog. Rate-limited to " +
-      "10 requests/min — do not retry a 429 immediately.",
+      "Semantic (vector-similarity) search of agent-expertise-api for " +
+      "expertise entries. Supports the local API-key profile and the upstream " +
+      "pre-provisioned bearer/static-OIDC profile (ADR-0103). Read-only; " +
+      "returns advisory results that must be cross-checked against source. " +
+      "Rate-limited to 10 requests/min — do not retry a 429 immediately.",
     promptSnippet:
-      "Search local agent-expertise-api with expertise_search (advisory; loopback-only).",
+      "Search agent-expertise-api with expertise_search before non-trivial coding work (advisory).",
     promptGuidelines: [
-      "expertise_search returns advisory expertise; cross-check results against the agent catalog before acting.",
-      "expertise_search talks only to a local loopback agent-expertise-api and requires PI_EXPERTISE_API_KEY (ADR-0028).",
+      "Use expertise_search before solving a non-trivial coding problem to check for prior knowledge and avoid rediscovery.",
+      "expertise_search returns advisory expertise; cross-check results against repository code, first-party documentation, and the agent catalog before acting.",
+      "expertise_search supports either local PI_EXPERTISE_* API-key config or agent-expertise-api's EXPERTISE_API_* bearer-token contract; never request or echo the credential.",
       "expertise_search is semantic search rate-limited to 10 requests/min; on a rate-limit refusal, wait rather than retrying immediately.",
     ],
     parameters: Type.Object({
@@ -83,7 +84,11 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, signal) {
-      const cfg = buildClientConfig(process.env, loadEnvLocal(resolveEnvPath()));
+      const cfg = buildClientConfig(
+        process.env,
+        loadEnvLocal(resolveEnvPath()),
+        loadUpstreamSecrets(process.env),
+      );
       if (!cfg.ok) return refusal("expertise_search", cfg.reason);
 
       const health = await checkReady(cfg.config, signal ? { signal } : {});
@@ -122,16 +127,16 @@ export default function (pi: ExtensionAPI) {
     name: "expertise_create",
     label: "Expertise Create",
     description:
-      "Create a single entry in the local agent-expertise-api. Loopback-only " +
-      "and API-key-authenticated (ADR-0028). Create-only (no update/delete) " +
-      "and gated behind PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1; the body is " +
+      "Create a single entry in agent-expertise-api through the configured " +
+      "local or upstream bearer profile (ADR-0103). Create-only (no " +
+      "update/delete) and gated behind PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1; the body is " +
       "scanned for credentials before any network call. A near-duplicate " +
       "entry is rejected by the server (HTTP 409) with the existing entry " +
       "returned — reuse it rather than retrying.",
     promptSnippet:
-      "Create local agent-expertise-api entries with expertise_create (loopback-only; opt-in write).",
+      "Create agent-expertise-api entries with expertise_create (human-approved, opt-in write).",
     promptGuidelines: [
-      "expertise_create writes to a local loopback agent-expertise-api and requires PI_EXPERTISE_API_KEY plus PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1 (ADR-0028).",
+      "expertise_create requires PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1 in either auth profile and remains subject to the expertise-fanout-gate human-approval ledger when that gate is loaded.",
       "expertise_create is create-only and refuses bodies containing credential patterns; never put secrets in an expertise entry.",
       "expertise_create requires deliberate entryType and severity classification; if the server reports a near-duplicate (409), reuse the existing entry instead of retrying.",
     ],
@@ -179,7 +184,11 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, signal) {
-      const cfg = buildClientConfig(process.env, loadEnvLocal(resolveEnvPath()));
+      const cfg = buildClientConfig(
+        process.env,
+        loadEnvLocal(resolveEnvPath()),
+        loadUpstreamSecrets(process.env),
+      );
       if (!cfg.ok) return refusal("expertise_create", cfg.reason);
 
       const result = await runCreate(

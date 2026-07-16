@@ -10,7 +10,8 @@ import { checkReady } from "../shared/expertise-api-health.ts";
 
 const CONFIG: ClientConfig = {
   baseUrl: "http://127.0.0.1:8080",
-  apiKey: "test-key",
+  bearerToken: "test-key",
+  authMode: "local-api-key",
   allowWrite: false,
 };
 
@@ -43,12 +44,17 @@ test("checkReady fails closed on a network error", async () => {
   if (!r.ready) assert.match(r.reason, /unreachable/i);
 });
 
-test("checkReady targets /health/ready", async () => {
+test("checkReady targets the anonymous /health/ready endpoint without bearer", async () => {
   let seen = "";
-  const capture = (async (url: URL) => {
+  let headers: Record<string, string> | undefined;
+  const capture = (async (url: URL, init: RequestInit) => {
     seen = url.pathname;
+    headers = init.headers as Record<string, string>;
     return new Response("ok", { status: 200 });
   }) as unknown as typeof fetch;
   await checkReady(CONFIG, { fetchImpl: capture });
   assert.equal(seen, "/health/ready");
+  assert.equal(headers?.authorization, undefined);
+  assert.equal(headers?.["x-actor-class"], undefined);
+  assert.match(headers?.["user-agent"] ?? "", /pi-coding-agent/);
 });

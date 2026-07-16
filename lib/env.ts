@@ -1,24 +1,20 @@
 /**
- * expertise-client — `.env.local` path anchoring (ADR-0028).
+ * expertise-client — configuration-file path anchoring (ADR-0103).
  *
- * Phase 1 reads configuration from two sources only:
- *   1. `process.env` (highest precedence)
- *   2. a single FIXED extension-local file: `<ext>/.env.local`
- *
- * There is intentionally NO arbitrary `.env` discovery: the loader never walks
- * parent directories and never reads a repository's own `.env`. This prevents a
- * checked-out project from silently redirecting the client's endpoint or
- * supplying credentials (ADR-0028 § Trust and Security Controls).
- *
- * The pure parse/load helpers moved to `shared/expertise-api-config.ts`
- * (ADR-0095) so the fanout gate shares one parser; only the path RESOLUTION —
- * which is anchored to THIS extension's directory — stays here. They are
- * re-exported for compatibility with existing imports.
+ * The legacy local profile keeps its extension-owned `.env.local`. The upstream
+ * bearer profile uses agent-expertise-api's operator-owned
+ * `~/.config/expertise-api/secrets.env` contract (or its explicit process-env
+ * override). Neither path is discovered from the current repository.
  */
 
 import { fileURLToPath } from "node:url";
 
-export { loadEnvLocal, parseEnvFile } from "../shared/expertise-api-config.ts";
+export {
+  loadEnvLocal,
+  loadUpstreamSecrets,
+  parseEnvFile,
+  resolveUpstreamSecretsPath,
+} from "../shared/expertise-api-config.ts";
 
 /** Absolute path of the one env file the client will read. */
 export function resolveEnvPath(): string {
