@@ -18,8 +18,8 @@
  * Detection reads only `<cwd>/.pi/extensions/<dir>/index.ts` (the project-local
  * extension discovery path). It never injects file content anywhere — it scans
  * for a conflicting tool-name registration and returns a boolean. This is NOT a
- * configuration or credential source (cf. ADR-0028 § Trust and Security
- * Controls); it is a local conflict-avoidance check and fails OPEN (registers
+ * configuration or credential source (cf. ADR-0103 § Trust and Security
+ * Controls, carried from ADR-0028); it is a local conflict-avoidance check and fails OPEN (registers
  * normally) on any read error.
  */
 

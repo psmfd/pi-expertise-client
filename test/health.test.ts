@@ -1,5 +1,5 @@
 /**
- * expertise-client — /health/ready preflight tests (ADR-0028).
+ * expertise-client — /health/ready preflight tests (ADR-0103).
  */
 
 import { test } from "node:test";

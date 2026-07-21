@@ -1,5 +1,5 @@
 /**
- * expertise-client — expertise_search tests (ADR-0028, #489).
+ * expertise-client — expertise_search tests (ADR-0103, #489).
  *
  * Pins the REAL agent-expertise-api semantic-search contract (v1.1.0, re-verified
  * unchanged at v1.4.1)

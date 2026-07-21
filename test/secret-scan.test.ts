@@ -1,5 +1,5 @@
 /**
- * expertise-client — secret-scan tests (ADR-0028, #318, #489).
+ * expertise-client — secret-scan tests (ADR-0103, #318, #489).
  *
  * Asserts the body guard matches each credential category and returns category
  * NAMES only — never the matched secret text. #489 regression coverage: every

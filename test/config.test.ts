@@ -1,5 +1,5 @@
 /**
- * expertise-client — config resolution + env parsing tests (ADR-0028).
+ * expertise-client — config resolution + env parsing tests (ADR-0103).
  */
 
 import { test } from "node:test";

@@ -68,10 +68,151 @@ fails open (registers normally) on any read error. Set
 | `expertise_search` | read-only | Semantic query of the configured API. Its prompt contract directs pi to search before non-trivial coding work. Output is **advisory** and must be cross-checked against code/docs. Rate-limited to 10 requests/min server-side. |
 | `expertise_create` | create-only write | Creates a single entry. Double-gated: requires `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE=1` **and** a clean body-secret scan. No update/delete/archive/approve. |
 
+## How it works
+
+**Event flow** — load-time coexistence, then the two tool paths (and the
+fanout-gate hook that precedes `expertise_create` when loaded):
+
+```mermaid
+sequenceDiagram
+    participant Model as pi model turn
+    participant Runtime as pi runtime
+    participant Client as expertise-client
+    participant Gate as expertise-fanout-gate
+    participant API as agent-expertise-api
+
+    Note over Runtime,Client: Load time — every session
+    Runtime->>Client: import + default(pi)
+    Client->>Client: shouldSkipRegistration(cwd, env)
+    alt conflicting project ext OR SKIP_EXPERTISE_CLIENT=1
+        Client-->>Runtime: stand down — no tools (stderr note)
+    else no conflict
+        Client->>Runtime: registerTool(expertise_search)
+        Client->>Runtime: registerTool(expertise_create)
+    end
+
+    Note over Model,API: expertise_search
+    Model->>Runtime: tool_call expertise_search(query, limit)
+    Runtime->>Client: execute()
+    Client->>Client: buildClientConfig(env, .env.local, secrets.env)
+    Client->>API: GET /health/ready (no bearer)
+    API-->>Client: 200 / non-200
+    Client->>API: GET /expertise/search/semantic
+    API-->>Client: 2xx / 429 / non-2xx
+    Client-->>Runtime: advisory content + details
+    Runtime-->>Model: tool_result (untrusted, never system context)
+
+    Note over Model,API: expertise_create (fanout-gate loaded)
+    Model->>Runtime: tool_call expertise_create(fields)
+    Runtime->>Gate: tool_call hook fires first
+    alt no matching human-approval ledger entry
+        Gate-->>Runtime: block (fail-closed, no timeout)
+    else ledger match
+        Runtime->>Client: execute()
+        Client->>Client: allowWrite → secret-scan → checkReady
+        Client->>API: POST /expertise (Idempotency-Key)
+        API-->>Client: 2xx / 409 dup / non-2xx
+        Client-->>Runtime: advisory content + details
+    end
+```
+
+**Decisioning** — the coexistence guard, profile selection, and the create
+ladder:
+
+```mermaid
+flowchart TD
+    subgraph LOAD["Load-time coexistence guard (ADR-0029)"]
+        A["shouldSkipRegistration(cwd, env)"] --> B{"SKIP_EXPERTISE_CLIENT truthy?"}
+        B -- yes --> C["stand down: register nothing"]
+        B -- no --> D{"project-local .pi/extensions/* registers a conflicting tool? (regex scan, fail-open)"}
+        D -- yes --> C
+        D -- no --> E["register expertise_search + expertise_create"]
+    end
+
+    subgraph CONFIG["buildClientConfig — start of every tool call"]
+        F{"EXPERTISE_API_BASE_URL or EXPERTISE_API_TOKEN set?"}
+        F -- yes --> G{"both base URL and token present?"}
+        G -- no --> R1["refuse: partial upstream pair"]
+        G -- yes --> H{"valid URL, no embedded creds, loopback or https?"}
+        H -- no --> R2["refuse: invalid/insecure upstream URL"]
+        H -- yes --> UPSTREAM["config: upstream-bearer"]
+        F -- no --> K{"valid loopback URL AND PI_EXPERTISE_API_KEY set?"}
+        K -- no --> R3["refuse: local profile invalid / key missing"]
+        K -- yes --> LOCAL["config: local-api-key"]
+    end
+    E --> F
+
+    subgraph CREATELADDER["expertise_create ladder (fail-fast, ADR-0103)"]
+        UPSTREAM --> W1{"allowWrite opt-in?"}
+        LOCAL --> W1
+        W1 -- no --> R6["refuse: write disabled"]
+        W1 -- yes --> W2{"body-secret scan clean?"}
+        W2 -- no --> R7["refuse: credential in body (category only)"]
+        W2 -- yes --> W3{"/health/ready 200?"}
+        W3 -- no --> R8["refuse: API not ready"]
+        W3 -- yes --> W4["POST /expertise → 2xx / 409 duplicate"]
+    end
+```
+
+**Dependencies** — the extension owns its `lib/`; the transport/config/secret
+stack lives in `shared/` (the only allowed cross-extension path, ADR-0065/0088)
+and is inlined into the standalone mirror:
+
+```mermaid
+graph TD
+    subgraph CLIENT["expertise-client (this extension)"]
+        IDX["index.ts"]
+        COEXIST["lib/coexist.ts"]
+        CREATE_LIB["lib/create.ts"]
+        RUNCREATE["lib/run-create.ts"]
+        SCAN["lib/secret-scan.ts"]
+        ENV["lib/env.ts"]
+    end
+
+    subgraph SHARED["../shared/ (allowed cross-ext path, ADR-0065/0088)"]
+        SCFG["expertise-api-config.ts"]
+        SHTTP["expertise-api-http.ts"]
+        SHEALTH["expertise-api-health.ts"]
+        SSEARCH["expertise-api-search.ts"]
+        SSECRET["secret-scan.ts (SECRET_PATTERNS)"]
+    end
+
+    subgraph DISK["operator/installer-owned config"]
+        ENVLOCAL[".env.local (gitignored, mode 600)"]
+        SECRETSENV["~/.config/expertise-api/secrets.env"]
+        PROJEXT["cwd/.pi/extensions/* (read-only scan)"]
+    end
+
+    IDX --> COEXIST
+    IDX --> RUNCREATE
+    IDX --> ENV
+    IDX --> SCFG
+    IDX --> SHEALTH
+    IDX --> SSEARCH
+    RUNCREATE --> CREATE_LIB
+    RUNCREATE --> SCAN
+    CREATE_LIB --> SHTTP
+    SCAN --> SSECRET
+    ENV --> SCFG
+    COEXIST -. reads .-> PROJEXT
+    ENV -. reads .-> ENVLOCAL
+    SCFG -. reads .-> SECRETSENV
+    MIRROR["mirror: inline: [secret-scan, expertise-api-config,<br/>expertise-api-http, expertise-api-health, expertise-api-search]"] -. inlines shared/ into .-> PKG["psmfd/pi-expertise-client"]
+```
+
 ## Configuration
 
 Configuration is read only from process environment and fixed operator-owned
 files; the extension never walks a repository for `.env` files.
+
+### Cross-profile variables
+
+These apply regardless of which profile is selected:
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Explicit `expertise_create` opt-in, in **either** profile. |
+| `SKIP_EXPERTISE_CLIENT` | no | `0` | Force stand-down (registers nothing) at load time — resolved before any profile, so it is profile-independent (see [Coexistence](#coexistence-adr-0029)). |
 
 ### Upstream bearer profile (selected when either upstream variable is present)
 
@@ -97,8 +238,9 @@ Precedence: process env > extension `.env.local` > defaults.
 |---|---|---|---|
 | `PI_EXPERTISE_API_BASE_URL` | no | `http://127.0.0.1:8080` | Loopback origin; non-loopback hosts are refused in this profile. |
 | `PI_EXPERTISE_API_KEY` | **yes** | — | Local Development API key. |
-| `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Explicit create opt-in in either profile. |
-| `SKIP_EXPERTISE_CLIENT` | no | `0` | Stand down to avoid duplicate tool registration. |
+
+(The write opt-in `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` and the stand-down switch
+`SKIP_EXPERTISE_CLIENT` are profile-independent — see [Cross-profile variables](#cross-profile-variables).)
 
 `.env.local` is gitignored. Only `.env.example` is tracked.
 
@@ -120,6 +262,11 @@ All of the following are **hard refusals** under the selected profile:
 | any string field of the `expertise_create` body matches a credential pattern | refuse (category named, secret never echoed) |
 | create request errors or returns non-2xx | refuse (409 near-duplicate and 400/other bodies are surfaced) |
 | search returns HTTP 429 (rate limit) | refuse with a wait-before-retry message (surfaces `Retry-After` when present) |
+
+For `expertise_create` these are enforced as a strict, fail-fast **ladder** (no
+network call until every gate passes), in order: **1.** `allowWrite` opt-in →
+**2.** body-secret scan → **3.** `/health/ready` preflight → **4.** POST
+(`lib/run-create.ts`).
 
 ## Trust boundary
 
@@ -148,6 +295,32 @@ All of the following are **hard refusals** under the selected profile:
   (every string property and string-array element), so a future contract field
   cannot silently bypass it (#489). It returns **category names only**, never
   the matched secret, so the refusal message cannot leak the value.
+
+## Cross-extension integration (expertise-fanout-gate)
+
+The sibling `expertise-fanout-gate`
+extension ([ADR-0095](https://github.com/psmfd/pi-config/blob/main/adrs/0095-deterministic-expertise-fanout-gate.md),
+amended by [ADR-0103](https://github.com/psmfd/pi-config/blob/main/adrs/0103-upstream-expertise-static-oidc-consumption.md))
+ships in the same distribution and, **when loaded**, changes the effective
+behaviour of both tools — so the gates in the Refusal policy above are not the
+whole story:
+
+- **`expertise_create` is additionally gated by a fail-closed human-approval
+  ledger.** The gate installs its own `tool_call` hook that fires **before** pi
+  dispatches to this extension's `execute()`. It blocks the create unless a prior
+  human approval (via `ctx.ui.confirm` on a surfaced `EXPERTISE_CANDIDATES`
+  group) recorded a matching ledger entry; headless or ledger-miss ⇒ blocked (no
+  timeout). This runs *ahead of* this extension's `allowWrite → secret-scan →
+  checkReady → POST` ladder.
+- **`expertise_search` may be invoked automatically, outside any model-visible
+  tool call.** The gate's subagent-fanout detector calls the search path
+  directly (via `shared/expertise-api-search.ts`), not through this extension's
+  registered `expertise_search` tool, as a deterministic research pre-fetch —
+  with its own audit/telemetry surface.
+
+The standalone `pi-expertise-client` mirror ships **without** the gate, so a
+consumer installing only this extension sees exactly the Refusal-policy gates and
+no ledger. This section documents the in-repo/full-suite behaviour.
 
 ## API contract
 

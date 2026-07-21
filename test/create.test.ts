@@ -1,5 +1,5 @@
 /**
- * expertise-client — expertise_create / runCreate tests (ADR-0028, #318, #489).
+ * expertise-client — expertise_create / runCreate tests (ADR-0103, #318, #489).
  *
  * Covers the create policy ladder (opt-in gate → body-secret scan → readiness
  * → create) at the runCreate dispatch boundary, plus the transport-level

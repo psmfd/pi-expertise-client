@@ -1,5 +1,5 @@
 /**
- * expertise-client — lightweight create-body secret guard (ADR-0028, #318).
+ * expertise-client — lightweight create-body secret guard (ADR-0103, superseding ADR-0028; #318).
  *
  * `secrets-guard` (the global pi extension) intercepts only
  * `write`/`edit`/`artifact_review`/`bash` tool calls and is scoped to
