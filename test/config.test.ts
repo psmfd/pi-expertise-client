@@ -19,7 +19,9 @@ import {
   ENV_ALLOW_WRITE,
   ENV_UPSTREAM_BASE_URL,
   ENV_UPSTREAM_TOKEN,
+  ENV_UPSTREAM_TOKEN_FILE,
   ENV_UPSTREAM_SECRETS_FILE,
+  MAX_UPSTREAM_TOKEN_FILE_BYTES,
   resolveUpstreamSecretsPath,
   loadUpstreamSecrets,
 } from "../shared/expertise-api-config.ts";
@@ -164,13 +166,99 @@ test("buildClientConfig: upstream secrets file supplies the bearer profile", () 
   assert.equal(r.config.bearerToken, "file-token");
 });
 
+test("buildClientConfig: mounted token file is read and trimmed on every call", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exp-mounted-token-"));
+  try {
+    const tokenPath = join(dir, "oidc-token");
+    await fs.writeFile(tokenPath, " first-token\n", { mode: 0o600 });
+    const upstream = {
+      [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN_FILE]: tokenPath,
+    };
+
+    const first = buildClientConfig({}, {}, upstream);
+    assert.ok(first.ok);
+    assert.equal(first.config.bearerToken, "first-token");
+
+    await fs.writeFile(tokenPath, "second-token\n", { mode: 0o600 });
+    const second = buildClientConfig({}, {}, upstream);
+    assert.ok(second.ok);
+    assert.equal(second.config.bearerToken, "second-token");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildClientConfig: mounted token source is absolute, bounded, and non-empty", () => {
+  const base = { [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example" };
+
+  const relative = buildClientConfig(
+    {},
+    {},
+    { ...base, [ENV_UPSTREAM_TOKEN_FILE]: "relative/token" },
+  );
+  assert.equal(relative.ok, false);
+  if (!relative.ok) assert.match(relative.reason, /absolute path/i);
+
+  const empty = buildClientConfig(
+    {},
+    {},
+    { ...base, [ENV_UPSTREAM_TOKEN_FILE]: "/mounted/token" },
+    () => "  \n",
+  );
+  assert.equal(empty.ok, false);
+  if (!empty.ok) assert.match(empty.reason, /contains no bearer token/i);
+
+  const oversized = buildClientConfig(
+    {},
+    {},
+    { ...base, [ENV_UPSTREAM_TOKEN_FILE]: "/mounted/token" },
+    () => "x".repeat(MAX_UPSTREAM_TOKEN_FILE_BYTES + 1),
+  );
+  assert.equal(oversized.ok, false);
+  if (!oversized.ok) assert.match(oversized.reason, /exceeds/i);
+});
+
+test("buildClientConfig: mounted token read failures do not disclose the path", () => {
+  const tokenPath = "/private/mounted/tenant-secret-token";
+  const failed = buildClientConfig(
+    {},
+    {},
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN_FILE]: tokenPath,
+    },
+    () => {
+      throw new Error("read failed");
+    },
+  );
+  assert.equal(failed.ok, false);
+  if (!failed.ok) {
+    assert.match(failed.reason, /unreadable/i);
+    assert.equal(failed.reason.includes(tokenPath), false);
+  }
+});
+
+test("buildClientConfig: literal and file bearer sources are mutually exclusive", () => {
+  const r = buildClientConfig(
+    { [ENV_UPSTREAM_TOKEN]: "process-token" },
+    {},
+    {
+      [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example",
+      [ENV_UPSTREAM_TOKEN_FILE]: "/mounted/token",
+    },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.reason, /mutually exclusive/i);
+});
+
 test("buildClientConfig: partial upstream config fails instead of falling back", () => {
   const r = buildClientConfig(
     { [ENV_UPSTREAM_BASE_URL]: "https://expertise.lan.example" },
     { [ENV_API_KEY]: "legacy-key" },
   );
   assert.equal(r.ok, false);
-  if (!r.ok) assert.match(r.reason, /must both be set/i);
+  if (!r.ok) assert.match(r.reason, /exactly one of/i);
 });
 
 test("buildClientConfig: upstream remote cleartext and URL credentials are refused", () => {

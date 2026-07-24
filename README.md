@@ -32,7 +32,9 @@ This extension is a **client**. Choose one operator-provisioned profile:
    mkdir -p ~/.config/expertise-api
    # Write these without exposing the JWT in shell history or chat:
    # EXPERTISE_API_BASE_URL=https://expertise.lan.example
+   # Choose exactly one bearer source:
    # EXPERTISE_API_TOKEN=<offline-minted-JWT>
+   # EXPERTISE_API_TOKEN_FILE=/absolute/path/to/mounted-oidc-token
    chmod 600 ~/.config/expertise-api/secrets.env
    ```
 
@@ -130,9 +132,9 @@ flowchart TD
     end
 
     subgraph CONFIG["buildClientConfig — start of every tool call"]
-        F{"EXPERTISE_API_BASE_URL or EXPERTISE_API_TOKEN set?"}
-        F -- yes --> G{"both base URL and token present?"}
-        G -- no --> R1["refuse: partial upstream pair"]
+        F{"Any EXPERTISE_API upstream setting present?"}
+        F -- yes --> G{"base URL + exactly one of token or token file?"}
+        G -- no --> R1["refuse: partial or ambiguous upstream config"]
         G -- yes --> H{"valid URL, no embedded creds, loopback or https?"}
         H -- no --> R2["refuse: invalid/insecure upstream URL"]
         H -- yes --> UPSTREAM["config: upstream-bearer"]
@@ -214,18 +216,22 @@ These apply regardless of which profile is selected:
 | `PI_EXPERTISE_ALLOW_LOCALDEV_WRITE` | only for writes | `0` | Explicit `expertise_create` opt-in, in **either** profile. |
 | `SKIP_EXPERTISE_CLIENT` | no | `0` | Force stand-down (registers nothing) at load time — resolved before any profile, so it is profile-independent (see [Coexistence](#coexistence-adr-0029)). |
 
-### Upstream bearer profile (selected when either upstream variable is present)
+### Upstream bearer profile (selected when any upstream variable is present)
 
 Precedence: process env > `~/.config/expertise-api/secrets.env`.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `EXPERTISE_API_BASE_URL` | **yes** | — | API origin. Non-loopback endpoints require HTTPS. |
-| `EXPERTISE_API_TOKEN` | **yes** | — | Pre-provisioned bearer: static-OIDC JWT, LocalDev token, or compatible upstream credential. |
+| `EXPERTISE_API_TOKEN` | one bearer source | — | Literal pre-provisioned bearer: static-OIDC JWT, LocalDev token, or compatible upstream credential. |
+| `EXPERTISE_API_TOKEN_FILE` | one bearer source | — | Absolute path to a mounted bearer file. Read on every tool call so projected-token rotation is observed; capped at 64 KiB. |
 | `EXPERTISE_API_SECRETS_FILE` | no | `~/.config/expertise-api/secrets.env` | Explicit operator-owned file override. |
 
-A partial upstream pair fails closed instead of falling back to a legacy key.
-The token is never logged or returned. Authenticated requests also send
+Configure the base URL and exactly one bearer source. Partial configuration,
+a relative/unreadable/empty/oversized token file, or setting both bearer sources
+fails closed instead of falling back to a legacy key. Env-file values are
+literal: shell substitutions such as `$(cat …)` are never executed; use
+`EXPERTISE_API_TOKEN_FILE` instead. The token is never logged or returned. Authenticated requests also send
 `X-Actor-Class: agent` and `User-Agent: pi-coding-agent/pi-expertise-client`;
 a JWT needs `expertise.agent` for authoritative Agent audit classification.
 The documented anonymous `/health/ready` preflight carries no bearer.
@@ -274,9 +280,10 @@ network call until every gate passes), in order: **1.** `allowWrite` opt-in →
   requires its API key. Remote bearer transport requires HTTPS.
 - Static-OIDC JWT minting, signing-key custody, distribution, expiry, and
   rotation stay outside pi and follow upstream ADR-015/runbook.
-- The parent process owns `EXPERTISE_API_TOKEN`; subagent spawning strips it
-  and blocks default secrets-file discovery. Canonical results are parent-
-  fetched and injected as user-role task content.
+- The parent process owns `EXPERTISE_API_TOKEN` or the mounted credential named
+  by `EXPERTISE_API_TOKEN_FILE`; subagent spawning strips both variables and
+  blocks default secrets-file discovery. Canonical results are parent-fetched
+  and injected as user-role task content.
 - Returned content is **untrusted tool-call output**. It is surfaced only as the
   structured return value of `expertise_search`, framed as advisory, and is
   **never** injected as system context (see
