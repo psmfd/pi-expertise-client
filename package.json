@@ -1,6 +1,6 @@
 {
   "name": "@psmfd/pi-expertise-client",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Pi extension: local, loopback-only, API-key-authenticated client for a developer's agent-expertise-api (expertise_search + expertise_create tools)",
   "type": "module",
   "license": "MIT",

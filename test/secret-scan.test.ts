@@ -27,6 +27,9 @@ const PEM_ENC = "-----BEGIN ENCRYPTED " + "PRIVATE KEY-----";
 // Assembled by concatenation so this source file carries no literal JWT/bearer
 // token (keeps the pre-commit secrets-guard + gitleaks from self-tripping).
 const JWT = "eyJ" + "a".repeat(12) + "." + "eyJ" + "b".repeat(12) + "." + "c".repeat(20);
+const JWT_OVERLONG_SIGNATURE =
+  "eyJ" + "a".repeat(12) + "." + "eyJ" + "b".repeat(12) + "." + "c".repeat(4001);
+const JWT_NESTED_VALID_START = "eyJ" + "a".repeat(4001) + JWT;
 const BEARER = "Authorization: " + "Bearer " + "x".repeat(24);
 
 /** Minimal valid create body per the v1.1.0 contract; override per test. */
@@ -58,6 +61,14 @@ test("detects GitHub classic PAT in title", () => {
 test("detects a signed JWT in body", () => {
   const cats = scanForSecrets(entry({ body: `token ${JWT}` }));
   assert.deepEqual(cats, ["signed-jwt"]);
+});
+
+test("does not match a prefix of an overlong JWT signature (#922)", () => {
+  assert.deepEqual(scanForSecrets(entry({ body: JWT_OVERLONG_SIGNATURE })), []);
+});
+
+test("detects a valid JWT start nested in an overlong segment (#922)", () => {
+  assert.deepEqual(scanForSecrets(entry({ body: JWT_NESTED_VALID_START })), ["signed-jwt"]);
 });
 
 test("detects an Authorization: Bearer literal in body", () => {
